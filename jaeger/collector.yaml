@@ -10,7 +10,7 @@ service:
   pipelines:
     traces:
       receivers: [otlp]
-      processors: [batch, adaptive_sampling]
+      processors: [batch]
       exporters: [jaeger_storage_exporter]
   telemetry:
     resource:
@@ -39,12 +39,13 @@ extensions:
     htpasswd:
       inline: "${env:OTLP_USERNAME:-otlp}:${env:OTLP_PASSWORD}"
 
-  # Adaptive sampling: the collector observes throughput per operation and
-  # serves per-service probabilities back to instrumented clients. Private only.
+  # Remote sampling: instrumented clients fetch their sampling probability from
+  # the collector instead of hard-coding one. File-based rather than adaptive,
+  # because the Elasticsearch/OpenSearch backend implements no sampling store --
+  # `storage 'main_storage' does not support sampling store` at boot. Private only.
   remote_sampling:
-    adaptive:
-      sampling_store: main_storage
-      initial_sampling_probability: ${env:JAEGER_INITIAL_SAMPLING_PROBABILITY:-0.1}
+    file:
+      path: ${env:JAEGER_SAMPLING_STRATEGIES_FILE:-/jaeger-railway/sampling-strategies.json}
     http:
       endpoint: 0.0.0.0:5778
     grpc:
@@ -86,9 +87,6 @@ receivers:
 
 processors:
   batch:
-  # Required by remote_sampling's adaptive mode: it counts spans per service
-  # and operation so the strategy served back to clients can adapt.
-  adaptive_sampling:
 
 exporters:
   jaeger_storage_exporter:

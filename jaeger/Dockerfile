@@ -15,3 +15,4 @@ FROM jaegertracing/jaeger:2.20.0
 
 COPY jaeger/collector.yaml /jaeger-railway/collector.yaml
 COPY jaeger/query.yaml     /jaeger-railway/query.yaml
+COPY jaeger/sampling-strategies.json /jaeger-railway/sampling-strategies.json
