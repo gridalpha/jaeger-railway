@@ -1,0 +1,39 @@
+{
+	admin off
+	auto_https off
+	servers {
+		trusted_proxies static 100.64.0.0/10 fd00::/8 152.233.0.0/17
+	}
+}
+
+:{$PORT:8080} {
+	encode zstd gzip
+
+	# Anonymous, so Railway's health prober -- which sends no credentials --
+	# gets a 200 while every real route stays behind basic auth.
+	handle /healthz {
+		respond "ok" 200
+	}
+
+	handle {
+		basic_auth {
+			{$JAEGER_UI_USERNAME} {$JAEGER_UI_PASSWORD_HASH}
+		}
+		reverse_proxy {$JAEGER_QUERY_UPSTREAM} {
+			header_up X-Real-IP {client_ip}
+		}
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

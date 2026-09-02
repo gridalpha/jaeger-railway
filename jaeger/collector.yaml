@@ -1,0 +1,95 @@
+# Jaeger v2 collector role.
+#
+# Receives OTLP over gRPC (4317) and HTTP (4318), both behind HTTP basic auth so
+# the ingest endpoint can be published, and writes spans straight to OpenSearch.
+# Every value that differs per deployment is read from the environment, so this
+# file carries no secret and no hostname.
+
+service:
+  extensions: [basicauth/otlp, jaeger_storage, remote_sampling, healthcheckv2]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch, adaptive_sampling]
+      exporters: [jaeger_storage_exporter]
+  telemetry:
+    resource:
+      service.name: jaeger-collector
+    metrics:
+      level: detailed
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888
+    logs:
+      level: ${env:JAEGER_LOG_LEVEL:-info}
+
+extensions:
+  # Railway probes this port; the public domain targets 4318 instead.
+  healthcheckv2:
+    use_v2: true
+    http:
+      endpoint: 0.0.0.0:13133
+
+  # Guards both OTLP protocols. htpasswd accepts a plaintext entry, and the
+  # value is expanded from the environment at start, so it is never on disk.
+  basicauth/otlp:
+    htpasswd:
+      inline: "${env:OTLP_USERNAME:-otlp}:${env:OTLP_PASSWORD}"
+
+  # Adaptive sampling: the collector observes throughput per operation and
+  # serves per-service probabilities back to instrumented clients. Private only.
+  remote_sampling:
+    adaptive:
+      sampling_store: main_storage
+      initial_sampling_probability: ${env:JAEGER_INITIAL_SAMPLING_PROBABILITY:-0.1}
+    http:
+      endpoint: 0.0.0.0:5778
+    grpc:
+      endpoint: 0.0.0.0:5779
+
+  jaeger_storage:
+    backends:
+      main_storage:
+        opensearch:
+          server_urls:
+            - ${env:OPENSEARCH_URL:-http://opensearch.railway.internal:9200}
+          auth:
+            basic:
+              username: ${env:OPENSEARCH_USERNAME:-admin}
+              password: ${env:OPENSEARCH_PASSWORD}
+          indices:
+            # One node, so one shard and no replica -- the default 5/1 leaves
+            # every index yellow and wastes heap on a single-node cluster.
+            spans: &index_options
+              date_layout: "2006-01-02"
+              rollover_frequency: day
+              shards: 1
+              replicas: 0
+            services: *index_options
+            dependencies: *index_options
+            sampling: *index_options
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+        auth:
+          authenticator: basicauth/otlp
+      http:
+        endpoint: 0.0.0.0:4318
+        auth:
+          authenticator: basicauth/otlp
+
+processors:
+  batch:
+  # Required by remote_sampling's adaptive mode: it counts spans per service
+  # and operation so the strategy served back to clients can adapt.
+  adaptive_sampling:
+
+exporters:
+  jaeger_storage_exporter:
+    trace_storage: main_storage
